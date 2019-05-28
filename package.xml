@@ -1,0 +1,96 @@
+<package id="musecashacc"
+         name="musecashacc"
+         developer="Muse Systems"
+         descrip="Add features related to operating cash accounting method in xTuple ERP."
+         version="1.0.0"
+         updater="2.4.0">
+
+    <pkgnotes>
+        Add features related to operating cash accounting method in xTuple ERP.
+    </pkgnotes>
+    <prerequisite type="Query"
+                name="xTuple ERP version">
+        <query>
+            WITH version AS (
+            SELECT
+                (SELECT substring(fetchMetricText('ServerVersion'),E'^([[:digit:]]+)\..*'))::integer as major_version,
+                (SELECT substring(fetchMetricText('ServerVersion'),E'^[[:digit:]]+\.([[:digit:]]+)\..*$'))::integer as minor_version,
+                (SELECT substring(fetchMetricText('ServerVersion'),E'^[[:digit:]]+\.[[:digit:]]+\.([[:digit:]]+)'))::integer as patch_version
+             )
+             SELECT
+                    (major_version = 4 AND minor_version = 11 AND patch_version >= 3)
+                OR  (major_version = 4 AND minor_version > 11)
+                OR  (major_version > 4)
+             FROM version;
+        </query>
+        <message>
+            This package must be installed against xTuple ERP version 4.11.3 or later.  This package has only been tested against version 4.11.3 and may not work in later version without updating.
+        </message>
+    </prerequisite>
+    <prerequisite type="Query"
+                   name="Muse Systems xTuple Utilities">
+         <query>
+                WITH version AS (
+                   SELECT
+                       (SELECT substring(pkghead_version,E'^([[:digit:]]+)\..*'))::integer as major_version,
+                       (SELECT substring(pkghead_version,E'^[[:digit:]]+\.([[:digit:]]+)\..*$'))::integer as minor_version,
+                       (SELECT substring(pkghead_version,E'^[[:digit:]]+\.[[:digit:]]+\.([[:digit:]]+)'))::integer as      patch_version
+                    FROM pkghead
+                    WHERE pkghead_name = 'musextputils'
+                )
+                SELECT
+                       (major_version = 5 AND minor_version = 0 AND patch_version >= 0)
+                   OR  (major_version = 5 AND minor_version > 0)
+                   OR  (major_version > 5)
+                FROM version;
+         </query>
+         <message>
+             This package requires that the Muse Systems xTuple Utilities version 5.0.0 or any higher version 4 series is installed prior to installation of this package.
+         </message>
+     </prerequisite>
+    <prerequisite type="Query"
+                name="Customer Deposits">
+        <query>
+            SELECT  true
+            FROM    public.metric
+            WHERE   metric_name = 'EnableCustomerDeposits'
+                AND substring(lower(metric_value),'^.') = 't';
+        </query>
+        <message>
+            We require that you be using Customer Deposits for processing Cash Receipts.
+        </message>
+    </prerequisite>
+    <prerequisite type="Query"
+                name="GL Posting">
+        <query>
+            SELECT  true
+            FROM    public.metric
+            WHERE   metric_name = 'UseJournals'
+                AND substring(lower(metric_value),'^.') = 'f';
+        </query>
+        <message>
+            We require that transactions post to the General Ledger.  We do not support posting transactions to Journals at this time.  See Accounting general setup for configuration.
+        </message>
+    </prerequisite>
+    <prerequisite type="Query"
+                name="Multi-Company">
+        <query>
+            SELECT  true
+            FROM    public.metric
+            WHERE   metric_name = 'MultiCompanyFinancialConsolidation'
+                AND metric_value::integer = 0;
+        </query>
+        <message>
+            We do not currently support mutli-company consolidation with this functionality.
+        </message>
+    </prerequisite>
+
+    <initscript file="database/misc/create_early_musemetrics.sql" />
+
+    <createfunction file="database/functions/create_cash_acc_je.sql" name="create_cash_acc_je" />
+    <createfunction file="database/functions/reverse_cash_acc_je.sql" name="reverse_cash_acc_je" />
+    <createfunction file="database/functions/xtp_override/closeaccountingyearperiod.sql" name="closeaccountingyearperiod" />
+    <createfunction file="database/functions/xtp_override/openaccountingyearperiod.sql" name="openaccountingyearperiod" />
+
+
+</package>
