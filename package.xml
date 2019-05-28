@@ -2,7 +2,7 @@
          name="musecashacc"
          developer="Muse Systems"
          descrip="Add features related to operating cash accounting method in xTuple ERP."
-         version="0.1.0"
+         version="1.0.0"
          updater="2.4.0">
 
     <pkgnotes>
