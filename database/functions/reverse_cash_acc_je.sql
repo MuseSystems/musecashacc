@@ -32,6 +32,12 @@ CREATE OR REPLACE FUNCTION musecashacc.reverse_cash_acc_je(pYearPeriodId integer
 
                 vCashAdjDocNumRoot text;
                 vLastCashAdjDocNumSeq text;
+
+                vIsLastPeriodOpen boolean := false;
+                vIsLastPeriodToBeClosed boolean := false;
+                vLastPeriodId integer;
+                vOpenLastPeriodResult integer;
+                vCloseLastPeriodResult integer;
             BEGIN
 
                 -- Check if we do anything at all
@@ -46,6 +52,20 @@ CREATE OR REPLACE FUNCTION musecashacc.reverse_cash_acc_je(pYearPeriodId integer
                     RETURN null::integer;
 
                 END IF;
+
+                SELECT
+                     period_id
+                INTO vLastPeriodId
+                FROM
+                    (SELECT
+                         row_number() OVER
+                            (PARTITION BY period_yearperiod_id
+                             ORDER BY period_end DESC) AS row_number
+                        ,period_yearperiod_id
+                        ,period_id
+                     FROM period) q
+                     WHERE period_yearperiod_id = pYearPeriodId
+                        AND row_number = 1;
 
                 -- Get the year end info and assemble our candidate docnum
                 SELECT
@@ -72,6 +92,17 @@ CREATE OR REPLACE FUNCTION musecashacc.reverse_cash_acc_je(pYearPeriodId integer
                     RETURN null::integer;
                 END IF;
 
+                vOpenLastPeriodResult := public.openAccountingPeriod(vLastPeriodId);
+
+                IF vOpenLastPeriodResult >= -1 THEN
+                    vIsLastPeriodOpen := true;
+                    vIsLastPeriodToBeClosed := vOpenLastPeriodResult > -1;
+                ELSE
+                    RAISE EXCEPTION
+                        'Cash accounting extension encountered errors trying to open the last accounting period for the year. (FUNC: musecashacc.reverse_cash_acc_je) (pYearPeriodId: %, vOpenLastPeriodResult: %)',
+                        pYearPeriodId, vOpenLastPeriodResult;
+                END IF;
+
                 -- We have work to do, so do it.
                 SELECT gltrans_sequence
                 INTO vReverseJeSeq
@@ -85,6 +116,17 @@ CREATE OR REPLACE FUNCTION musecashacc.reverse_cash_acc_je(pYearPeriodId integer
                     vReverseJeSeq,
                     vTargYearEnd,
                     'Reversing Cash Accounting Entries: '||vCashAdjDocNumRoot ||'-'||vLastCashAdjDocNumSeq);
+
+                -- Close the last open period if we should
+                IF vIsLastPeriodToBeClosed THEN
+                    vCloseLastPeriodResult := public.closeAccountingPeriod(vLastPeriodId);
+
+                    IF vCloseLastPeriodResult < 0 THEN
+                        RAISE EXCEPTION
+                            'Cash accounting extension encountered errors trying to close the last accounting period for the year. (FUNC: musecashacc.reverse_cash_acc_je) (pYearPeriodId: %, vCloseLastPeriodResult: %)',
+                            pYearPeriodId, vCloseLastPeriodResult;
+                    END IF;
+                END IF;
 
             END;
         $BODY$

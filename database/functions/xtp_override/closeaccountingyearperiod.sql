@@ -23,23 +23,8 @@
 CREATE OR REPLACE FUNCTION musecashacc.closeaccountingyearperiod(pYearPeriodId integer)
     RETURNS integer AS
         $BODY$
-            DECLARE
-                vGlSeqId integer;
-                vTransCount integer;
             BEGIN
-                vGlSeqId := musecashacc.create_cash_acc_je(pYearPeriodId);
-
-                IF vGlSeqId IS NOT NULL THEN
-                    -- We created a cash accounting JE, post it
-                    vTransCount := public.postglseries(vGlSeqId);
-
-                    IF coalesce(vTransCount, 0) = 0 THEN
-                        RAISE EXCEPTION
-                             'We failed to post cash accounting entries as required. (FUNC: musecashacc.closeaccountingyearperiod) (pYearPeriodId: %)'
-                            ,pYearPeriodId;
-
-                    END IF;
-                END IF;
+                PERFORM musecashacc.create_cash_acc_je(pYearPeriodId);
 
                 RETURN public.closeaccountingyearperiod(pYearPeriodId);
 

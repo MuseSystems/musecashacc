@@ -45,6 +45,12 @@ CREATE OR REPLACE FUNCTION musecashacc.create_cash_acc_je(pYearPeriodId integer)
 
                 vCurrentYearStart date;
                 vCurrentYearEnd date;
+
+                vIsLastPeriodUsed boolean := false;
+                vIsLastPeriodToBeClosed boolean := false;
+                vLastPeriodId integer;
+                vOpenLastPeriodResult integer;
+                vCloseLastPeriodResult integer;
             BEGIN
 
                 -- Check if we do anything at all
@@ -67,6 +73,20 @@ CREATE OR REPLACE FUNCTION musecashacc.create_cash_acc_je(pYearPeriodId integer)
                 vExpCashAdjAccntId := musextputils.get_musemetric('musecashacc', 'expCashAdjAccntId', null::numeric)::integer;
 
                 vGlSequence := fetchGLSequence();
+
+                SELECT
+                     period_id
+                INTO vLastPeriodId
+                FROM
+                    (SELECT
+                         row_number() OVER
+                            (PARTITION BY period_yearperiod_id
+                             ORDER BY period_end DESC) AS row_number
+                        ,period_yearperiod_id
+                        ,period_id
+                     FROM period) q
+                     WHERE period_yearperiod_id = pYearPeriodId
+                        AND row_number = 1;
 
                 -- Try to detect CR/CMs
                 IF
@@ -139,6 +159,19 @@ CREATE OR REPLACE FUNCTION musecashacc.create_cash_acc_je(pYearPeriodId integer)
                     AND yearperiod_start >= (SELECT yearperiod_start FROM public.yearperiod WHERE yearperiod_id = vCashAccFirstYearPeriodId);
 
                 IF coalesce(vArOpenCurrentYearBal, 0) != 0 THEN
+                    -- First reopen the last period since that may be necessary
+                    -- to book our entry.
+                    vOpenLastPeriodResult := public.openAccountingPeriod(vLastPeriodId);
+
+                    IF vOpenLastPeriodResult >= -1 THEN
+                        vIsLastPeriodUsed := true;
+                        vIsLastPeriodToBeClosed := vOpenLastPeriodResult > -1;
+                    ELSE
+                        RAISE EXCEPTION
+                            'Cash accounting extension encountered errors trying to open the last accounting period for the year. (FUNC: musecashacc.create_cash_acc_je) (Curr Year AR; pYearPeriodId: %, vOpenLastPeriodResult: %)',
+                            pYearPeriodId, vOpenLastPeriodResult;
+                    END IF;
+
                     PERFORM
                         public.insertintoglseries(
                             vGlSequence,
@@ -221,6 +254,20 @@ CREATE OR REPLACE FUNCTION musecashacc.create_cash_acc_je(pYearPeriodId integer)
                     AND targ.aropen_distdate < yearperiod_start;
 
                 IF coalesce(vArOpenLastClosedCurrent, 0) != 0 THEN
+
+                    IF NOT vIsLastPeriodUsed THEN
+                        vOpenLastPeriodResult := public.openAccountingPeriod(vLastPeriodId);
+
+                        IF vOpenLastPeriodResult >= -1 THEN
+                            vIsLastPeriodUsed := true;
+                            vIsLastPeriodToBeClosed := vOpenLastPeriodResult > -1;
+                        ELSE
+                            RAISE EXCEPTION
+                                'Cash accounting extension encountered errors trying to open the last accounting period for the year. (FUNC: musecashacc.create_cash_acc_je) (Last Year AR; pYearPeriodId: %, vOpenLastPeriodResult: %)',
+                                pYearPeriodId, vOpenLastPeriodResult;
+                        END IF;
+                    END IF;
+
                     PERFORM
                         public.insertintoglseries(
                             vGlSequence,
@@ -282,6 +329,20 @@ CREATE OR REPLACE FUNCTION musecashacc.create_cash_acc_je(pYearPeriodId integer)
                     AND yearperiod_start >= (SELECT yearperiod_start FROM public.yearperiod WHERE yearperiod_id = vCashAccFirstYearPeriodId);
 
                 IF coalesce(vApOpenCurrentYearBal, 0) != 0 THEN
+
+                    IF NOT vIsLastPeriodUsed THEN
+                        vOpenLastPeriodResult := public.openAccountingPeriod(vLastPeriodId);
+
+                        IF vOpenLastPeriodResult >= -1 THEN
+                            vIsLastPeriodUsed := true;
+                            vIsLastPeriodToBeClosed := vOpenLastPeriodResult > -1;
+                        ELSE
+                            RAISE EXCEPTION
+                                'Cash accounting extension encountered errors trying to open the last accounting period for the year. (FUNC: musecashacc.create_cash_acc_je) (Curr Year AP; pYearPeriodId: %, vOpenLastPeriodResult: %)',
+                                pYearPeriodId, vOpenLastPeriodResult;
+                        END IF;
+                    END IF;
+
                     PERFORM
                         public.insertintoglseries(
                             vGlSequence,
@@ -362,6 +423,20 @@ CREATE OR REPLACE FUNCTION musecashacc.create_cash_acc_je(pYearPeriodId integer)
                     AND targ.apopen_distdate < yearperiod_start;
 
                 IF coalesce(vApOpenLastClosedCurrent, 0) != 0 THEN
+
+                    IF NOT vIsLastPeriodUsed THEN
+                        vOpenLastPeriodResult := public.openAccountingPeriod(vLastPeriodId);
+
+                        IF vOpenLastPeriodResult >= -1 THEN
+                            vIsLastPeriodUsed := true;
+                            vIsLastPeriodToBeClosed := vOpenLastPeriodResult > -1;
+                        ELSE
+                            RAISE EXCEPTION
+                                'Cash accounting extension encountered errors trying to open the last accounting period for the year. (FUNC: musecashacc.create_cash_acc_je) (Last Year AP; pYearPeriodId: %, vOpenLastPeriodResult: %)',
+                                pYearPeriodId, vOpenLastPeriodResult;
+                        END IF;
+                    END IF;
+
                     PERFORM
                         public.insertintoglseries(
                             vGlSequence,
@@ -384,6 +459,24 @@ CREATE OR REPLACE FUNCTION musecashacc.create_cash_acc_je(pYearPeriodId integer)
                             vCurrentYearEnd,
                             'Year Ending '||vCurrentYearEnd||' Exp. Cash Accounting Adjustment; Open Last Year/Closed This Year' || vApOpenLastClosedCurrentDocs,
                             null);
+                END IF;
+
+                -- We created a cash accounting JE, post it
+                IF vIsLastPeriodUsed AND public.postglseries(vGlSequence) = 0 THEN
+                    RAISE EXCEPTION
+                         'We failed to post cash accounting entries as required. (FUNC: musecashacc.create_cash_acc_je) (pYearPeriodId: %)'
+                        ,pYearPeriodId;
+                END IF;
+
+                -- Close the last open period if we should
+                IF vIsLastPeriodToBeClosed THEN
+                    vCloseLastPeriodResult := public.closeAccountingPeriod(vLastPeriodId);
+
+                    IF vCloseLastPeriodResult < 0 THEN
+                        RAISE EXCEPTION
+                            'Cash accounting extension encountered errors trying to close the last accounting period for the year. (FUNC: musecashacc.create_cash_acc_je) (pYearPeriodId: %, vCloseLastPeriodResult: %)',
+                            pYearPeriodId, vCloseLastPeriodResult;
+                    END IF;
                 END IF;
 
                 -- Return GL Seq if we actually created a series
